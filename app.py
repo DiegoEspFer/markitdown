@@ -1,9 +1,7 @@
-"""
-Punto de entrada principal para la aplicación Streamlit.
-Coordina la interfaz, lógica de conversión y manejo de archivos.
-"""
 import os
 import streamlit as st
+from src.security import apply as _apply_security
+_apply_security()
 import base64
 import tiktoken 
 

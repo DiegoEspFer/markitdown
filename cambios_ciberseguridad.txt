@@ -1,0 +1,145 @@
+REPORTE DE CAMBIOS POR CIBERSEGURIDAD - MARKITDOWN APP
+========================================================
+Basado en escaneo OWASP ZAP (Checkmarx) - 2026-06-02
+Sitio escaneado: http://172.30.19.93:9004/
+========================================================
+
+
+ARCHIVO 1: src/security.py (NUEVO)
+-----------------------------------
+Ubicación: raiz_proyecto/src/security.py
+Tipo de cambio: Archivo creado desde cero
+
+Descripcion:
+  Modulo que inyecta cabeceras de seguridad HTTP en todas las respuestas
+  de la aplicacion. Lo hace mediante un "monkey-patch" sobre la clase base
+  RequestHandler de Tornado (el servidor web interno que usa Streamlit),
+  sobreescribiendo su metodo "finish" para agregar las cabeceras antes de
+  enviar cada respuesta al navegador.
+
+Cabeceras agregadas y que solucionan:
+
+  1. Content-Security-Policy
+     Alerta ZAP: "Cabecera Content Security Policy (CSP) no configurada"
+     Nivel de riesgo: MEDIO | CWE-693
+     Que soluciona: Indica al navegador de que origenes puede cargar
+     recursos (scripts, estilos, imagenes, conexiones). Previene ataques
+     XSS (Cross-Site Scripting) e inyeccion de contenido malicioso.
+     Valor configurado:
+       default-src 'self';
+       script-src 'self' 'unsafe-inline' 'unsafe-eval';
+       style-src 'self' 'unsafe-inline';
+       img-src 'self' data: blob:;
+       font-src 'self' data:;
+       connect-src 'self' ws: wss:;
+       frame-ancestors 'none';
+     Nota: 'unsafe-inline' y 'unsafe-eval' son requeridos por Streamlit
+     para su funcionamiento interno.
+
+  2. X-Frame-Options: DENY
+     Alerta ZAP: "Falta de cabecera Anti-Clickjacking"
+     Nivel de riesgo: MEDIO | CWE-1021
+     Que soluciona: Impide que la aplicacion sea embebida en un iframe
+     de otro sitio web. Previene ataques de Clickjacking, donde un
+     atacante superpone la app sobre contenido engannoso para que el
+     usuario haga clic sin saberlo.
+     (Tambien cubierto por "frame-ancestors 'none'" dentro de la CSP)
+
+  3. X-Content-Type-Options: nosniff
+     Alerta ZAP: "Falta encabezado X-Content-Type-Options"
+     Nivel de riesgo: BAJO | CWE-693
+     Que soluciona: Evita que el navegador "adivine" el tipo de contenido
+     (MIME-sniffing). Obliga a interpretar los archivos exactamente con
+     el tipo declarado por el servidor, previniendo que un archivo JS
+     disfrazado sea ejecutado como otro tipo de recurso.
+
+  4. Referrer-Policy: strict-origin-when-cross-origin
+     (Cabecera adicional de buenas practicas)
+     Que soluciona: Controla cuanta informacion de la URL de origen se
+     envia al navegar a otros sitios, protegiendo URLs internas de ser
+     filtradas a terceros.
+
+  5. Permissions-Policy: geolocation=(), microphone=(), camera=()
+     (Cabecera adicional de buenas practicas)
+     Que soluciona: Desactiva explicitamente el acceso a hardware
+     sensible del dispositivo (camara, microfono, GPS) que la aplicacion
+     no necesita.
+
+
+ARCHIVO 2: .streamlit/config.toml (NUEVO)
+------------------------------------------
+Ubicacion: raiz_proyecto/.streamlit/config.toml
+Tipo de cambio: Archivo creado desde cero
+
+Descripcion:
+  Archivo de configuracion oficial de Streamlit que activa opciones de
+  seguridad a nivel del servidor.
+
+Configuraciones aplicadas:
+
+  [server]
+  enableCORS = false
+    Que soluciona: Desactiva el permiso de CORS que Streamlit trae
+    habilitado por defecto. Impide que sitios externos puedan hacer
+    peticiones a la app directamente desde el navegador de un usuario.
+
+  enableXsrfProtection = true
+    Que soluciona: Activa la proteccion XSRF (Cross-Site Request
+    Forgery) de Streamlit de forma explicita. Esta proteccion valida
+    que las peticiones provienen de la propia app y no de un sitio
+    malicioso que intenta ejecutar acciones en nombre del usuario.
+
+  [browser]
+  gatherUsageStats = false
+    Que soluciona: Desactiva el envio de estadisticas de uso anonimas
+    al servidor de Streamlit. Reduce el flujo de datos salientes y
+    mejora la privacidad en entornos corporativos.
+
+
+ARCHIVO 3: app.py (MODIFICADO)
+--------------------------------
+Ubicacion: raiz_proyecto/app.py
+Tipo de cambio: Se agregaron 2 lineas al inicio del archivo (lineas 3-4)
+
+Lineas agregadas:
+  from src.security import apply as _apply_security
+  _apply_security()
+
+Que hace:
+  Importa y ejecuta el modulo de seguridad (src/security.py) al momento
+  en que Streamlit carga la aplicacion. Al ejecutarse antes de cualquier
+  peticion HTTP, garantiza que el parche sobre Tornado quede activo para
+  todas las respuestas desde el primer momento.
+
+
+========================================================
+VULNERABILIDADES NO CORREGIDAS Y RAZON
+========================================================
+
+  1. Cookie Sin Flag HttpOnly (_streamlit_xsrf)
+     Nivel: BAJO | CWE-1004
+     Por que no se corrigio:
+       Esta cookie es el token CSRF de Streamlit. JavaScript NECESITA
+       poder leerla para incluirla en los handshakes de WebSocket que
+       mantienen la comunicacion en tiempo real de la app. Si se agrega
+       HttpOnly, JavaScript no puede leer la cookie y la aplicacion deja
+       de funcionar (pantalla en blanco, sin conexion).
+       Se trata de un falso positivo de ZAP en el contexto de Streamlit,
+       que usa el patron "Double Submit Cookie" donde el token debe ser
+       accesible por JS por diseno. Se documenta como riesgo aceptado.
+
+  2. Divulgacion de Marcas de Tiempo - Unix
+     Nivel: BAJO | CWE-497
+     Por que no se corrigio:
+       Los timestamps provienen de dos fuentes:
+       a) Endpoint interno /_stcore/health de Streamlit: requeriria
+          parchear los internals del servidor de Streamlit, con alto
+          riesgo de inestabilidad.
+       b) Archivos .js de librerias estaticas (emotion-styled, v4, etc.):
+          los timestamps estan embebidos en el codigo fuente de las
+          librerias externas y no pueden modificarse sin alterar
+          el codigo de terceros.
+       Dado que es severidad Baja y los timestamps no revelan informacion
+       sensible del sistema, se documenta como riesgo aceptado.
+       Solucion definitiva: proxy reverso (Nginx/Caddy) que filtre
+       o suprima estas respuestas a nivel de infraestructura.
