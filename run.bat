@@ -1,26 +1,21 @@
 @echo off
-echo ==============================================
-echo    Iniciando MarkItDown Converter App
-echo ==============================================
+:: Navega a la carpeta del script (por seguridad)
+cd /d %~dp0
 
-cd /d "%~dp0"
-
-REM Si borraste la carpeta venv, esta condición se cumplirá y creará el entorno correcto
-IF NOT EXIST "venv\Scripts\activate" (
-    echo Creando entorno virtual con Python 3.12 en "venv"...
-    py -3.12 -m venv venv
+echo Verificando entorno virtual...
+if not exist ".venv" (
+    echo Creando entorno virtual...
+    python -m venv .venv
 )
 
-echo.
 echo Activando entorno virtual...
-call venv\Scripts\activate
+call .venv\Scripts\activate.bat
 
-echo.
-echo Instalando dependencias desde requirements.txt...
-pip install -r requirements.txt
+echo Instalando dependencias...
+:: Usar la ruta directa asegura que se instale dentro de este entorno
+.venv\Scripts\python.exe -m pip install -r requirements.txt
 
-echo.
 echo Ejecutando la aplicacion Streamlit...
-streamlit run app.py
+.venv\Scripts\streamlit.exe run app.py
 
 pause
